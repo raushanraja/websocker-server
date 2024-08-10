@@ -184,7 +184,7 @@ async fn main() {
     });
 
     let server_connection_handler = tokio::spawn(async move {
-        let listener = match TcpListener::bind("127.0.0.1:8080").await {
+        let listener = match TcpListener::bind("0.0.0.0:8080").await {
             Ok(listener) => listener,
             Err(e) => {
                 eprintln!("Failed to bind to address: {}", e);
