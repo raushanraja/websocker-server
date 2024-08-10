@@ -1,0 +1,8 @@
+# Ignore the target directory
+target/
+
+# Optionally ignore other files or directories that are not needed in the Docker image
+.git/
+.gitignore
+Dockerfile
+.dockerignore
