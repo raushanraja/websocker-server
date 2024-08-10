@@ -54,13 +54,15 @@ fn handle_message(server: Arc<SServer>, msg: ServerMessage) {
         }
         ServerMessage::Message(id, message) => match server.clients.try_read() {
             Ok(clients) => {
-                if let Some(client) = clients.get(&id) {
-                    println!(
-                        "Sending new message client_id: {}, message: {}",
-                        client.id, message
-                    );
-                    if let Err(e) = client.sender.send(message.clone()) {
-                        eprintln!("Failed to send message: {}", e);
+                for (client_id, client) in clients.iter() {
+                    if *client_id != id {
+                        println!(
+                            "Sending new message to client_id: {}, message: {}",
+                            client.id, message
+                        );
+                        if let Err(e) = client.sender.send(message.clone()) {
+                            eprintln!("Failed to send message to client {}: {}", client.id, e);
+                        }
                     }
                 }
             }
@@ -80,11 +82,7 @@ fn handle_message(server: Arc<SServer>, msg: ServerMessage) {
     }
 }
 // Define a method to handle incoming WebSocket connections
-async fn handle_connection(
-    tx: mpsc::UnboundedSender<ServerMessage>,
-    clients: Arc<RwLock<HashMap<u64, CClient>>>,
-    ws_stream: WebSocketStream<TcpStream>,
-) {
+async fn handle_connection(server: Arc<SServer>, ws_stream: WebSocketStream<TcpStream>) {
     let _count = 0;
     let (mut outgoing, incoming) = ws_stream.split();
     let client_id = next_id();
@@ -94,6 +92,8 @@ async fn handle_connection(
         id: client_id,
         sender: message_tx.clone(),
     };
+
+    let tx = server.tx.clone();
 
     if let Err(e) = tx.send(ServerMessage::NewClient(client.clone())) {
         eprintln!("Failed to send new client message: {}", e);
@@ -109,40 +109,20 @@ async fn handle_connection(
     let _msc = message_tx.clone();
     loop {
         tokio::select! {
-                    message = message_rx.recv() =>{
-                        match  message {
-                                Some(msg) => {
-                                    let _ = outgoing.send(Message::Text(msg)).await;
-                                },
-                                None => println!("None"),
-                            }
-                    },
+                        message = message_rx.recv() =>{
+                            match  message {
+                                    Some(msg) => {
+                                        let _ = outgoing.send(Message::Text(msg)).await;
+                                    },
+                                    None => println!("None"),
+                                }
+                        },
 
-        msg = incoming.next() => {
-            match msg {
-                Some(Ok(msg)) => {
-                    // handle_message(server, msg)
-                    println!("Received message: {}", msg);
+                        message = incoming.next() => {
+                            handle_message(server.clone(), ServerMessage::Message(client_id, message.unwrap().unwrap().to_string()));
+                        },
 
-                    for (id, client) in clients.read().await.iter() {
-                        if *id == client_id {continue}
-                        if let Err(e) = client.sender.send(msg.to_string()) {
-                            eprintln!("Failed to send message: {}", e);
-                        }
-                    }
-               }
-                _ => {
-                    if let Err(e) = txc.send(ServerMessage::RemoveClient(client_id)) {
-                        eprintln!("Failed to send remove client message: {}", e);
-                    }
-                    break;
-                }
-            }
         }
-                    _ = ping_interval.tick() => {
-                           // txc.send(ServerMessage::Message(client_id, String::from("Ping"))).unwrap();
-                    }
-                }
     }
 }
 
@@ -198,11 +178,9 @@ async fn main() {
         };
 
         while let Ok((stream, _)) = listener.accept().await {
-            let tx = server.tx.clone();
-            let clients = server.clients.clone();
             match tokio_tungstenite::accept_hdr_async(stream, process_request).await {
                 Ok(connection) => {
-                    let join_handle = handle_connection(tx, clients, connection);
+                    let join_handle = handle_connection(server.clone(), connection);
                     tokio::spawn(join_handle);
                 }
                 Err(e) => {
