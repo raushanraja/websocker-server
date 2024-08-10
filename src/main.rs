@@ -82,6 +82,7 @@ fn handle_message(server: Arc<SServer>, msg: ServerMessage) {
 // Define a method to handle incoming WebSocket connections
 async fn handle_connection(
     tx: mpsc::UnboundedSender<ServerMessage>,
+    clients: Arc<RwLock<HashMap<u64, CClient>>>,
     ws_stream: WebSocketStream<TcpStream>,
 ) {
     let _count = 0;
@@ -122,10 +123,14 @@ async fn handle_connection(
                 Some(Ok(msg)) => {
                     // handle_message(server, msg)
                     println!("Received message: {}", msg);
-                    if let Err(e) = txc.send(ServerMessage::Message(client_id, msg.to_string())) {
-                        eprintln!("Failed to send message: {}", e);
+
+                    for (id, client) in clients.read().await.iter() {
+                        if *id == client_id {continue}
+                        if let Err(e) = client.sender.send(msg.to_string()) {
+                            eprintln!("Failed to send message: {}", e);
+                        }
                     }
-                }
+               }
                 _ => {
                     if let Err(e) = txc.send(ServerMessage::RemoveClient(client_id)) {
                         eprintln!("Failed to send remove client message: {}", e);
@@ -194,9 +199,10 @@ async fn main() {
 
         while let Ok((stream, _)) = listener.accept().await {
             let tx = server.tx.clone();
+            let clients = server.clients.clone();
             match tokio_tungstenite::accept_hdr_async(stream, process_request).await {
                 Ok(connection) => {
-                    let join_handle = handle_connection(tx, connection);
+                    let join_handle = handle_connection(tx, clients, connection);
                     tokio::spawn(join_handle);
                 }
                 Err(e) => {
