@@ -30,7 +30,7 @@ const CACHE_POOL_MAX_OPEN: u32 = 16;
 const CACHE_POOL_MIN_IDLE: u32 = 8;
 const CACHE_POOL_TIMEOUT_SECONDS: u64 = 1;
 const CACHE_POOL_EXPIRE_SECONDS: u64 = 60;
-const REDIS_CON_STRING: &str = "redis://localhost:6379";
+const REDIS_CON_STRING: &str = "redis://redis:6379";
 
 pub fn connect() -> Result<r2d2::Pool<RedisConnectionManager>> {
     let manager =
