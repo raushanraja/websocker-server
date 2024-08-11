@@ -6,12 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+dotenvy = "0.15.7"
 futures-channel = "0.3.25"
 futures-sink = "0.3.25"
 futures-util = { version = "0.3.25", features = ["async-await", "sink", "std"] }
 hyper = { version = "0.14.23", features = ["full"] }
+r2d2_redis = "0.14.0"
 rand = "0.8.5"
+redis = "0.26.1"
 sink = "0.1.0"
+thiserror = "1.0.63"
 tokio = { version = "1.24.2", features = ["full"] }
 tokio-tungstenite = "0.18.0"
 tungstenite = "0.18.0"

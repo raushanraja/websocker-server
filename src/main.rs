@@ -1,5 +1,7 @@
 use futures_util::*;
+use r2d2_redis::redis::Commands;
 use rand;
+use rpool::R2D2Pool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,6 +12,8 @@ use tokio::time::interval;
 use tokio_tungstenite::WebSocketStream;
 use tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tungstenite::protocol::Message;
+
+mod rpool;
 
 // Define a struct to hold client's connection state
 #[derive(Debug, Clone)]
@@ -165,14 +169,14 @@ async fn handle_connection(server: Arc<SServer>, ws_stream: WebSocketStream<TcpS
     }
 }
 
-fn process_request(req: &Request, res: Response) -> Result<Response, ErrorResponse> {
+fn process_request(
+    req: &Request,
+    res: Response,
+    r2d2_pool: R2D2Pool,
+) -> Result<Response, ErrorResponse> {
     println!("Processing request: {:?}", req);
 
     let headers = req.headers();
-    let protocol = headers
-        .get("Sec-WebSocket-Protocol")
-        .map(|v| v.to_str().unwrap())
-        .unwrap_or("unknown");
 
     let username = headers
         .get("Sec-WebSocket-Username")
@@ -184,16 +188,50 @@ fn process_request(req: &Request, res: Response) -> Result<Response, ErrorRespon
         .map(|v| v.to_str().unwrap())
         .unwrap_or("unknown");
 
-    println!(
-        "Protocol: {}, Username: {}, Password: {}",
-        protocol, username, password
-    );
+    if (username == "unknown" || password == "unknown") {
+        return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
+    }
 
-    Ok(res)
+    // Get a connection from the pool
+    let mut conn = r2d2_pool.get().expect("Failed to get connection from pool");
+
+    // Get the password from redis
+    match conn.get::<&str, String>(username) {
+        Ok(p) => {
+            if p == password {
+                return Ok(res);
+            }
+            Err(ErrorResponse::new(Some("401 Unauthorized".to_string())))
+        }
+        Err(e) => {
+            eprintln!("Failed to get password from redis: {}", e);
+            return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().expect(".env file not found");
+
+    let r2d2_pool = rpool::connect().expect(
+        "Failed to create connection pool to redis. Please check your redis connection string",
+    );
+
+    for (key, value) in std::env::vars() {
+        if (key.contains("username_")) {
+            let username = key.replace("username_", "");
+            let password = value;
+
+            let mut conn = r2d2_pool.get().expect("Failed to get connection from pool");
+            let _: () = conn
+                .set(username, password)
+                .expect("Failed to set username and password in redis");
+        }
+    }
+
+    // Add username and password to redis
+
     let (tx, mut rx) = mpsc::unbounded_channel();
     let server = Arc::new(SServer {
         clients: Arc::new(RwLock::new(HashMap::new())),
@@ -217,7 +255,11 @@ async fn main() {
         };
 
         while let Ok((stream, _)) = listener.accept().await {
-            match tokio_tungstenite::accept_hdr_async(stream, process_request).await {
+            match tokio_tungstenite::accept_hdr_async(stream, |req: &Request, res: Response| {
+                process_request(req, res, r2d2_pool.clone())
+            })
+            .await
+            {
                 Ok(connection) => {
                     let join_handle = handle_connection(server.clone(), connection);
                     tokio::spawn(join_handle);
