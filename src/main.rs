@@ -62,6 +62,19 @@ fn handle_message(server: Arc<SServer>, msg: ServerMessage) {
                         );
                         if let Err(e) = client.sender.send(message.clone()) {
                             eprintln!("Failed to send message to client {}: {}", client.id, e);
+
+                            // Match error with "channel closed" Error
+                            if e.to_string().contains("channel closed") {
+                                let tx = server.tx.clone();
+                                if let Err(e) = tx.send(ServerMessage::RemoveClient(client.id)) {
+                                    eprintln!("Failed to send remove client message: {}", e);
+                                } else {
+                                    println!(
+                                        "Client {} disconnected, removing from clients list",
+                                        client.id
+                                    );
+                                }
+                            }
                         }
                     }
                 }
