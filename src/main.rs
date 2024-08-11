@@ -132,9 +132,35 @@ async fn handle_connection(server: Arc<SServer>, ws_stream: WebSocketStream<TcpS
                         },
 
                         message = incoming.next() => {
-                            handle_message(server.clone(), ServerMessage::Message(client_id, message.unwrap().unwrap().to_string()));
-                        },
+                            match message {
+                                Some(Ok(msg)) => {
+                                    let message = msg.into_text();
+                                    match message {
+                                        Ok(message) => {
+                                            handle_message(server.clone(), ServerMessage::Message(client_id, message));
+                                        },
+                                        Err(e) => {
+                                            eprintln!("Failed to convert message to text: {}", e);
+                                        }
+                                    }
+                                },
+                                Some(Err(e)) => {
+                                    eprintln!("Failed to receive message: {:?}", e);
+                                    if let Err(e) = txc.send(ServerMessage::RemoveClient(client_id)) {
+                                        eprintln!("Failed to send remove client message: {}", e);
+                                    }
+                                    break;
+                                },
+                                None => {
+                                    eprintln!("Connection closed");
+                                    if let Err(e) = txc.send(ServerMessage::RemoveClient(client_id)) {
+                                        eprintln!("Failed to send remove client message: {}", e);
+                                    }
+                                    break;
+                                }
+                            }
 
+                        },
         }
     }
 }
