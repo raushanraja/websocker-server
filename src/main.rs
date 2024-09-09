@@ -1,4 +1,5 @@
 use futures_util::*;
+use hyper::StatusCode;
 use r2d2_redis::redis::Commands;
 use rand;
 use rpool::R2D2Pool;
@@ -188,9 +189,12 @@ fn process_request(
         .map(|v| v.to_str().unwrap())
         .unwrap_or("unknown");
 
-    if (username == "unknown" || password == "unknown") {
-        return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
-    }
+    if username == "unknown" || password == "unknown" {
+        return Err(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Some("Access denied".into()))
+            .unwrap());
+    };
 
     // Get a connection from the pool
     let mut conn = r2d2_pool.get().expect("Failed to get connection from pool");
@@ -201,11 +205,17 @@ fn process_request(
             if p == password {
                 return Ok(res);
             }
-            Err(ErrorResponse::new(Some("401 Unauthorized".to_string())))
+            Err(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Some("Access denied".into()))
+                .unwrap())
         }
         Err(e) => {
             eprintln!("Failed to get password from redis: {}", e);
-            return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
+            Err(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Some("Access denied".into()))
+                .unwrap())
         }
     }
 }
