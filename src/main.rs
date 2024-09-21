@@ -179,22 +179,29 @@ fn process_request(
 
     let headers = req.headers();
 
-    let username = headers
+    let mut username = headers
         .get("Sec-WebSocket-Username")
         .map(|v| v.to_str().unwrap())
         .unwrap_or("unknown");
 
-    let password = headers
+    let mut password = headers
         .get("Sec-WebSocket-Password")
         .map(|v| v.to_str().unwrap())
         .unwrap_or("unknown");
 
     if username == "unknown" || password == "unknown" {
-        return Err(Response::builder()
-            .status(StatusCode::FORBIDDEN)
-            .body(Some("Access denied".into()))
-            .unwrap());
-    };
+        let userinfo = headers
+            .get("Sec-WebSocket-Protocol")
+            .map(|v| v.to_str().unwrap().split("-").collect::<Vec<&str>>())
+            .unwrap_or(vec!["unknown", "unknown"]);
+
+        username = userinfo[0];
+        password = userinfo[1];
+    }
+
+    if username == "unknown" || password == "unknown" {
+        return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
+    }
 
     // Get a connection from the pool
     let mut conn = r2d2_pool.get().expect("Failed to get connection from pool");
