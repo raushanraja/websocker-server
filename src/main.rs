@@ -1,4 +1,5 @@
 use futures_util::*;
+use hyper::header::HeaderValue;
 use hyper::StatusCode;
 use r2d2_redis::redis::Commands;
 use rand;
@@ -61,10 +62,10 @@ fn handle_message(server: Arc<SServer>, msg: ServerMessage) {
             Ok(clients) => {
                 for (client_id, client) in clients.iter() {
                     if *client_id != id {
-                        println!(
-                            "Sending new message to client_id: {}, message: {}",
-                            client.id, message
-                        );
+                        // println!(
+                        //     "Sending new message to client_id: {}, message: {}",
+                        //     client.id, message
+                        // );
                         if let Err(e) = client.sender.send(message.clone()) {
                             eprintln!("Failed to send message to client {}: {}", client.id, e);
 
@@ -166,6 +167,12 @@ async fn handle_connection(server: Arc<SServer>, ws_stream: WebSocketStream<TcpS
                             }
 
                         },
+                        _ = ping_interval.tick() => {
+                           // txc.send(ServerMessage::Message(client_id, String::from("Ping"))).unwrap();
+                            // if let Err(e) = outgoing.send(Message::Ping(vec![])).await {
+                            //     eprintln!("Failed to send ping: {}", e);
+                            // }
+                        }
         }
     }
 }
@@ -176,6 +183,7 @@ fn process_request(
     r2d2_pool: R2D2Pool,
 ) -> Result<Response, ErrorResponse> {
     println!("Processing request: {:?}", req);
+    let mut protocolled = false;
 
     let headers = req.headers();
 
@@ -192,15 +200,35 @@ fn process_request(
     if username == "unknown" || password == "unknown" {
         let userinfo = headers
             .get("Sec-WebSocket-Protocol")
-            .map(|v| v.to_str().unwrap().split("-").collect::<Vec<&str>>())
-            .unwrap_or(vec!["unknown", "unknown"]);
+            .and_then(|v| v.to_str().ok())
+            .map(|v| {
+                let parts: Vec<&str> = v.split(",").collect();
+                if parts.len() > 1 {
+                    let inner_parts: Vec<&str> = parts[1].split("-").collect();
+                    if inner_parts.len() > 1 {
+                        inner_parts
+                            .into_iter()
+                            .map(|s| s.trim())
+                            .collect::<Vec<&str>>()
+                    } else {
+                        vec!["unknown", "unknown"]
+                    }
+                } else {
+                    vec!["unknown", "unknown"]
+                }
+            })
+            .unwrap_or_else(|| vec!["unknown", "unknown"]);
 
+        protocolled = true;
         username = userinfo[0];
         password = userinfo[1];
     }
 
     if username == "unknown" || password == "unknown" {
-        return Err(ErrorResponse::new(Some("401 Unauthorized".to_string())));
+        return Err(Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .body(Some("Access denied".into()))
+            .unwrap());
     }
 
     // Get a connection from the pool
@@ -210,6 +238,16 @@ fn process_request(
     match conn.get::<&str, String>(username) {
         Ok(p) => {
             if p == password {
+                if protocolled == true {
+                    let (parts, body) = res.into_parts();
+                    let mut resp = Response::from_parts(parts, body);
+                    resp.headers_mut().insert(
+                        "Sec-WebSocket-Protocol",
+                        HeaderValue::from_str("mqtt").unwrap(),
+                    );
+
+                    return Ok(resp);
+                }
                 return Ok(res);
             }
             Err(Response::builder()
@@ -236,7 +274,7 @@ async fn main() {
     );
 
     for (key, value) in std::env::vars() {
-        if (key.contains("username_")) {
+        if key.contains("username_") {
             let username = key.replace("username_", "");
             let password = value;
 
@@ -290,4 +328,3 @@ async fn main() {
 
     join!(server_connection_handler, server_message_handler);
 }
-
